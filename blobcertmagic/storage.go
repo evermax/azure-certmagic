@@ -27,9 +27,10 @@ type blobCertStorage struct {
 }
 
 // NewStorage creates a new blob storage based certmagic storage
-func NewStorage(container azblob.ContainerURL) certmagic.Storage {
+func NewStorage(path string, container azblob.ContainerURL) certmagic.Storage {
 	return &blobCertStorage{
 		container: container,
+		Path:      path,
 	}
 }
 
@@ -104,7 +105,8 @@ func (bcm *blobCertStorage) Lock(key string) error {
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
 func (bcm *blobCertStorage) Unlock(key string) error {
-	return bcm.deleteLockFile(key)
+	lockFile := bcm.lockFileName(key)
+	return bcm.deleteLockFile(lockFile)
 }
 
 // Store puts value at key.
@@ -204,7 +206,6 @@ func (bcm *blobCertStorage) fileLockIsStale(info certmagic.KeyInfo) bool {
 }
 
 func (bcm *blobCertStorage) createLockFile(filename string) error {
-	//lf := s.lockFileName(key)
 	exists := bcm.Exists(filename)
 	if exists {
 		return fmt.Errorf(lockFileExists)
@@ -219,8 +220,8 @@ func (bcm *blobCertStorage) createLockFile(filename string) error {
 	return nil
 }
 
-func (bcm *blobCertStorage) deleteLockFile(keyPath string) error {
-	blobURL := bcm.container.NewBlobURL(keyPath)
+func (bcm *blobCertStorage) deleteLockFile(filename string) error {
+	blobURL := bcm.container.NewBlobURL(filename)
 	_, err := blobURL.Delete(context.Background(), azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	if err != nil {
 		return err
