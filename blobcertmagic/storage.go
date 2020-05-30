@@ -51,51 +51,57 @@ func NewStorage(path string, container azblob.ContainerURL) certmagic.Storage {
 // is relevant) should put a reasonable expiration on the lock in
 // case Unlock is unable to be called due to some sort of network
 // failure or system crash.
-func (bcm *blobCertStorage) Lock(key string) error {
+func (bcm *blobCertStorage) Lock(ctx context.Context, key string) error {
 	start := time.Now()
 	lockFile := bcm.lockFileName(key)
 
+	done := ctx.Done()
 	for {
-		err := bcm.createLockFile(lockFile)
-		if err == nil {
-			// got the lock, yay
-			return nil
-		}
-
-		if err.Error() != lockFileExists {
-			// unexpected error
-			fmt.Println(err)
-			return fmt.Errorf("creating lock file: %+v", err)
-
-		}
-
-		// lock file already exists
-		info, err := bcm.Stat(lockFile)
-		switch {
-		case bcm.errNoSuchKey(err):
-			// must have just been removed; try again to create it
-			continue
-
-		case err != nil:
-			// unexpected error
-			return fmt.Errorf("accessing lock file: %v", err)
-
-		case bcm.fileLockIsStale(info):
-			log.Printf("[INFO][%v] Lock for '%s' is stale; removing then retrying: %s",
-				bcm, key, lockFile)
-			bcm.deleteLockFile(lockFile)
-			continue
-
-		case time.Since(start) > lockDuration*2:
-			// should never happen, hopefully
-			return fmt.Errorf("possible deadlock: %s passed trying to obtain lock for %s",
-				time.Since(start), key)
-
+		select {
+		case <-done:
+			return fmt.Errorf("canceled before locked")
 		default:
-			// lockfile exists and is not stale;
-			// just wait a moment and try again
-			time.Sleep(fileLockPollInterval)
+			err := bcm.createLockFile(lockFile)
+			if err == nil {
+				// got the lock, yay
+				return nil
+			}
 
+			if err.Error() != lockFileExists {
+				// unexpected error
+				fmt.Println(err)
+				return fmt.Errorf("creating lock file: %+v", err)
+
+			}
+
+			// lock file already exists
+			info, err := bcm.Stat(lockFile)
+			switch {
+			case bcm.errNoSuchKey(err):
+				// must have just been removed; try again to create it
+				continue
+
+			case err != nil:
+				// unexpected error
+				return fmt.Errorf("accessing lock file: %v", err)
+
+			case bcm.fileLockIsStale(info):
+				log.Printf("[INFO][%v] Lock for '%s' is stale; removing then retrying: %s",
+					bcm, key, lockFile)
+				bcm.deleteLockFile(lockFile)
+				continue
+
+			case time.Since(start) > lockDuration*2:
+				// should never happen, hopefully
+				return fmt.Errorf("possible deadlock: %s passed trying to obtain lock for %s",
+					time.Since(start), key)
+
+			default:
+				// lockfile exists and is not stale;
+				// just wait a moment and try again
+				time.Sleep(fileLockPollInterval)
+
+			}
 		}
 	}
 }
